@@ -1,0 +1,27 @@
+{
+  "name": "marketsense-event-stream",
+  "version": "0.1.0",
+  "description": "Event stream module for MarketSense - handles real-time event processing and data flow management",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc",
+    "test": "jest",
+    "lint": "eslint src/**/*.ts",
+    "start": "node dist/index.js"
+  },
+  "keywords": ["event-stream", "real-time", "data-flow", "event-processing", "marketsense"],
+  "author": "EZ-Walk",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0",
+    "tsx": "^4.0.0",
+    "jest": "^29.0.0",
+    "@types/jest": "^29.0.0",
+    "eslint": "^8.0.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0"
+  },
+  "dependencies": {}
+}
