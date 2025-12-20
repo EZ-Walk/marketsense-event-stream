@@ -296,6 +296,23 @@ class StreamMonitoring {
 3. Add predictive alerting
 4. Implement adaptive scaling
 
+## Current UI Learnings
+
+The SPA evolved through a few visual prototypes, and the only stable elements that survived are:
+
+- **Supabase connectivity** – fetching from `staff_room_events` is solid, and the slider still controls how often new rows are polled.
+- **Source → Gate → Drain** – the conceptual layout works even without complex animation, so it is preserved as the core metaphor.
+- **Authentication + state controls** – the mock API key flow, plus the login/logout buttons, act as the minimal UX layer.
+
+### Anti-Patterns to Remember
+
+- **Overly complex animation phases** – layering multiple timeouts and CSS keyframes caused pills to appear mid-stream (not tied to the source) and made debugging impossible.
+- **Wide, descriptive pills** – letting the event pill span the entire rail meant it never seemed to move; reducing it to initials and the same width as source/drain solved that.
+- **Gate pulses throttled by animation delays** – the gate should reflect processing state from the AI agent, but the pulsing animation introduced race conditions with the mock queue.
+- **Autonomous clean-up timers** – previous implementations removed pills while others were still queued; the current flow simply replaces the latest pill, so more sophisticated sequencing should be deferred until we have real processing signals.
+
+Documenting these decisions keeps the next iteration focused on the working pieces.
+
 ## Key Dependencies
 
 ```json
