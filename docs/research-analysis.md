@@ -298,11 +298,13 @@ class StreamMonitoring {
 
 ## Current UI Learnings
 
-The SPA evolved through a few visual prototypes, and the only stable elements that survived are:
+The SPA evolved through a few visual prototypes, and the stable features include:
 
-- **Supabase connectivity** – fetching from `staff_room_events` is solid, and the slider still controls how often new rows are polled.
+- **Multi-table Supabase connectivity** – the app now supports connecting to multiple tables (`staff_room_events`, `temp_events`, `events`, `trello_events`) via a source selector modal.
+- **FIFO Queue Processing** – events are fetched in ascending timestamp order (oldest first) and tracked in localStorage to prevent re-processing.
 - **Source → Gate → Drain** – the conceptual layout works even without complex animation, so it is preserved as the core metaphor.
 - **Authentication + state controls** – the mock API key flow, plus the login/logout buttons, act as the minimal UX layer.
+- **Consumption rate slider** – still controls how often new rows are polled from the database.
 
 ### Anti-Patterns to Remember
 
@@ -312,6 +314,65 @@ The SPA evolved through a few visual prototypes, and the only stable elements th
 - **Autonomous clean-up timers** – previous implementations removed pills while others were still queued; the current flow simply replaces the latest pill, so more sophisticated sequencing should be deferred until we have real processing signals.
 
 Documenting these decisions keeps the next iteration focused on the working pieces.
+
+### FIFO Queue Implementation
+
+The current implementation uses localStorage to track processed events in a FIFO (first-in, first-out) manner:
+
+#### Key Features
+1. **Event Tracking**: Each processed event is tracked using a composite key: `${tableName}:${rawId}`
+2. **Oldest-First Fetching**: Events are fetched in ascending timestamp order from the database
+3. **Deduplication**: Before adding a new event, the app checks if it's already been processed
+4. **Persistent State**: Processed event IDs are stored in localStorage and survive page refreshes
+5. **Multi-Table Support**: Each table maintains its own processing cursor via the composite key
+
+#### Implementation Details
+```typescript
+// Local storage key for tracking processed events
+const PROCESSED_EVENTS_KEY = "ms-processed-events";
+
+// In-memory set for fast lookups
+let processedEventIds: Set<string> = new Set();
+
+// Load from localStorage on init
+function loadProcessedEventIds() {
+  const raw = localStorage.getItem(PROCESSED_EVENTS_KEY);
+  if (raw) {
+    processedEventIds = new Set(JSON.parse(raw));
+  }
+}
+
+// Save to localStorage after processing each event
+function saveProcessedEventIds() {
+  localStorage.setItem(
+    PROCESSED_EVENTS_KEY, 
+    JSON.stringify(Array.from(processedEventIds))
+  );
+}
+
+// FIFO fetch: oldest unprocessed events first
+async function fetchFromSupabase(limit: number, tableName: string) {
+  // Fetch in ASC order (oldest first)
+  const response = await fetch(
+    `...?order=${timestampColumn}.asc&limit=${limit}`
+  );
+  
+  // Filter out already-processed events
+  const unprocessed = data.filter((row: any) => {
+    const eventKey = `${tableName}:${row.id}`;
+    return !processedEventIds.has(eventKey);
+  });
+  
+  return unprocessed;
+}
+```
+
+#### User Controls
+- **Clear History**: Users can clear all processed event tracking via the source selector modal
+- **Table Switching**: Switching tables automatically loads the correct subset of processed IDs
+- **Visual Feedback**: The modal shows how many events have been processed
+
+This approach ensures that events are consumed in order and never processed twice, making it suitable for workflow automation where each event represents a task that should be executed exactly once.
 
 ## Key Dependencies
 

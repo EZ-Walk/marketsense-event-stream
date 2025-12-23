@@ -20,16 +20,28 @@ This SPA provides a visual control plane for monitoring event streams using the 
 - Visual representation of Source → Gate → Drain flow
 - Single-pill display in gate (simplified, non-animated)
 - Consumption rate slider (1-15 seconds)
-- Event source toggle (Postgres ↔ Mock)
+- **Multi-table source selector** (click source to choose table)
+- FIFO queue processing with local storage tracking
 
 ### Data Sources
-- **Postgres**: Supabase `staff_room_events` table integration
+- **Postgres Tables** (Supabase `cstbgyiuywcwjafqsadu`):
+  - `staff_room_events` (903 rows) - n8n workflow events
+  - `temp_events` (3,983 rows) - Notion integration events
+  - `events` (0 rows) - Structured event stream
+  - `trello_events` (0 rows) - Trello webhook events
 - **Mock**: In-memory event generation for testing
+
+### FIFO Queue Management
+- Oldest unprocessed events fetched first (ascending order)
+- Processed event tracking persisted in localStorage
+- Per-table event ID tracking (prevents re-processing)
+- Clear processed history option in source selector
 
 ### Event History
 - Expandable event log (click "Drain" to toggle)
 - Event filtering by type/source/description
 - Time-relative formatting (e.g., "2m ago")
+- Table-specific event mapping
 
 ## Getting Started
 
