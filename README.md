@@ -5,7 +5,7 @@ A single-page web application for visualizing and managing real-time event proce
 ## Overview
 
 This SPA provides a visual control plane for monitoring event streams using the **Source → Gate → Drain** metaphor:
-- **Source**: Event entry point (Supabase Postgres or in-memory mock)
+- **Source**: Event entry point (Event Gateway Postgres or in-memory mock)
 - **Gate**: Single-event processing bottleneck
 - **Drain**: Event exit point with expandable history view
 
@@ -24,11 +24,10 @@ This SPA provides a visual control plane for monitoring event streams using the 
 - FIFO queue processing with local storage tracking
 
 ### Data Sources
-- **Postgres Tables** (Supabase `cstbgyiuywcwjafqsadu`):
-  - `staff_room_events` (903 rows) - n8n workflow events
-  - `temp_events` (3,983 rows) - Notion integration events
-  - `events` (0 rows) - Structured event stream
-  - `trello_events` (0 rows) - Trello webhook events
+- **Postgres Tables** (via Event Gateway `GET /api/event-stream/tables`):
+  - `events` - Durable event log (UUID PK, `processed` boolean)
+  - `event_queue` - Row-locking event coordinator (queue)
+  - `event_processing_log` - Audit log for queue processing
 - **Mock**: In-memory event generation for testing
 
 ### FIFO Queue Management
@@ -59,6 +58,14 @@ npm install
 npm run dev -- --host 127.0.0.1 --port 4173
 
 # Access at http://127.0.0.1:4173/
+```
+
+### Configure Event Gateway URL
+
+Set `VITE_EVENT_GATEWAY_URL` to point at your running gateway (default `http://localhost:8000`):
+
+```bash
+VITE_EVENT_GATEWAY_URL=http://localhost:8000
 ```
 
 ### Mock API Key

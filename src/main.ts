@@ -46,37 +46,30 @@ const MOCK_USER: User = {
   token: ""
 };
 
-const SUPABASE_PROJECT_ID = "cstbgyiuywcwjafqsadu";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNzdGJneWl1eXdjd2phZnFzYWR1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc3MDIwOTQsImV4cCI6MjA3MzI3ODA5NH0.-fjJit2tO5-ecpmDaxTo6LIopWKW0otmvTTOMvP7TpQ";
+const EVENT_GATEWAY_URL =
+  (import.meta as any).env?.VITE_EVENT_GATEWAY_URL || "http://localhost:8000";
 
-// Available Postgres tables for event streaming
+// Available tables exposed by the Event Gateway for event streaming
 const POSTGRES_TABLES: PostgresTable[] = [
   {
-    name: "staff_room_events",
-    displayName: "Staff Room Events",
-    idColumn: "id",
-    timestampColumn: "created_at",
-    rowCount: 903
-  },
-  {
-    name: "temp_events",
-    displayName: "Temp Events",
-    idColumn: "id",
-    timestampColumn: "created_at",
-    rowCount: 3983
-  },
-  {
     name: "events",
-    displayName: "Events (Structured)",
+    displayName: "Events (Log)",
     idColumn: "id",
     timestampColumn: "created_at",
     rowCount: 0
   },
   {
-    name: "trello_events",
-    displayName: "Trello Events",
+    name: "event_queue",
+    displayName: "Event Queue (Row-locking)",
     idColumn: "id",
-    timestampColumn: "ingested_at",
+    timestampColumn: "created_at",
+    rowCount: 0
+  },
+  {
+    name: "event_processing_log",
+    displayName: "Processing Log",
+    idColumn: "id",
+    timestampColumn: "created_at",
     rowCount: 0
   }
 ];
@@ -98,9 +91,9 @@ let processedEventIds: Set<string> = new Set();
 
 const sources = {
   postgres: {
-    name: `Supabase (${SUPABASE_PROJECT_ID})`,
-    fetchLatest: async () => fetchFromSupabase(1, state.activeTable),
-    fetchInitial: async (limit = 10) => fetchFromSupabase(limit, state.activeTable)
+    name: "Event Gateway (Postgres)",
+    fetchLatest: async () => fetchFromGateway(1, state.activeTable),
+    fetchInitial: async (limit = 10) => fetchFromGateway(limit, state.activeTable)
   },
   mock: {
     name: "In-Memory Mock",
@@ -109,10 +102,11 @@ const sources = {
   }
 };
 
-const appRoot = document.querySelector<HTMLDivElement>("#app");
-if (!appRoot) {
+const appRootEl = document.querySelector<HTMLDivElement>("#app");
+if (!appRootEl) {
   throw new Error("App root container not found");
 }
+const appRoot = appRootEl;
 
 initialize();
 
@@ -200,7 +194,7 @@ function renderDashboard(user: User) {
           <p class="eyebrow">Event Stream</p>
           <h1>MarketSense Stream</h1>
           <p class="muted">
-            Connected: <span class="active-source">${SUPABASE_PROJECT_ID}</span>
+            Connected: <span class="active-source">${activeSourceName}</span>
             ${state.activeSource === "postgres" ? ` / ${displayTableName}` : ""}
           </p>
         </div>
@@ -380,7 +374,15 @@ function wireAuth() {
         role: MOCK_USER.role,
         token: apiKey
       };
-      state = { user, filter: "", expanded: false, consumptionRate: 5000, activeSource: "postgres" };
+      state = {
+        user,
+        filter: "",
+        expanded: false,
+        consumptionRate: 5000,
+        activeSource: "postgres",
+        activeTable: "events",
+        showTableSelector: false
+      };
       saveSession(user);
       initialize();
     } else {
@@ -571,102 +573,32 @@ function stopLiveFeed() {
   }
 }
 
-async function fetchFromSupabase(limit: number, tableName: string) {
+async function fetchFromGateway(limit: number, tableName: string) {
   const tableInfo = POSTGRES_TABLES.find(t => t.name === tableName);
   if (!tableInfo) throw new Error(`Unknown table: ${tableName}`);
 
-  // FIFO: Fetch oldest unprocessed events first (ASC order)
   const response = await fetch(
-    `https://${SUPABASE_PROJECT_ID}.supabase.co/rest/v1/${tableName}?select=*&order=${tableInfo.timestampColumn}.asc&limit=${limit}`,
+    `${EVENT_GATEWAY_URL}/api/event-stream/events?table=${encodeURIComponent(tableName)}&limit=${limit}`,
     {
       headers: {
-        apikey: SUPABASE_ANON_KEY,
-        Authorization: `Bearer ${SUPABASE_ANON_KEY}`
+        // mocked UI auth stays local; gateway runs in DEV_MODE with permissive CORS in docker-compose
       }
     }
   );
-  
+
   if (!response.ok) {
-    throw new Error(`Failed to fetch from ${tableName}: ${response.statusText}`);
+    throw new Error(`Failed to fetch from gateway (${tableName}): ${response.statusText}`);
   }
-  
+
   const data = await response.json();
-  
-  // Filter out already processed events and return the oldest unprocessed
-  const unprocessed = data.filter((row: any) => {
-    const eventKey = `${tableName}:${row[tableInfo.idColumn]}`;
+
+  // Preserve the existing FIFO/processed tracking semantics client-side.
+  const unprocessed = (data as StreamEvent[]).filter((evt) => {
+    const eventKey = `${tableName}:${evt.rawId || evt.id}`;
     return !processedEventIds.has(eventKey);
   });
-  
-  return unprocessed.slice(0, limit).map((row: any) => mapDbRow(row, tableName, tableInfo));
-}
 
-function mapDbRow(dbRow: any, tableName: string, tableInfo: PostgresTable): StreamEvent {
-  const timestamp = dbRow[tableInfo.timestampColumn] 
-    ? new Date(dbRow[tableInfo.timestampColumn]).getTime() 
-    : Date.now();
-  
-  // Table-specific mapping
-  switch (tableName) {
-    case "staff_room_events":
-      return {
-        id: dbRow.id,
-        rawId: dbRow.id,
-        type: dbRow.event_data?.action?.type || dbRow.source_node || "workflow",
-        source: tableName,
-        description: dbRow.event_data?.action?.data?.card?.name 
-          ? `Card: ${dbRow.event_data.action.data.card.name}` 
-          : `Workflow: ${dbRow.workflow_id || "unknown"}`,
-        status: "processed",
-        timestamp
-      };
-      
-    case "temp_events":
-      return {
-        id: dbRow.id?.toString() || randomId(),
-        rawId: dbRow.id,
-        type: dbRow.event_type || "unknown",
-        source: dbRow.workspace_name || "notion",
-        description: dbRow.event_data?.parent?.type 
-          ? `${dbRow.event_type} on ${dbRow.event_data.parent.type}` 
-          : dbRow.event_type || "Event",
-        status: "processed",
-        timestamp
-      };
-      
-    case "events":
-      return {
-        id: dbRow.id,
-        rawId: dbRow.id,
-        type: dbRow.event_type || "unknown",
-        source: dbRow.source || "system",
-        description: dbRow.payload?.description || `Event from ${dbRow.source}`,
-        status: dbRow.processed ? "processed" : "pending",
-        timestamp
-      };
-      
-    case "trello_events":
-      return {
-        id: dbRow.id,
-        rawId: dbRow.id,
-        type: dbRow.action_type || "trello",
-        source: dbRow.board_name || "trello",
-        description: dbRow.card_name || dbRow.translation_key || "Trello action",
-        status: dbRow.processed ? "processed" : "pending",
-        timestamp: dbRow.action_date ? new Date(dbRow.action_date).getTime() : timestamp
-      };
-      
-    default:
-      return {
-        id: dbRow.id?.toString() || randomId(),
-        rawId: dbRow.id,
-        type: "unknown",
-        source: tableName,
-        description: JSON.stringify(dbRow).slice(0, 100),
-        status: "processed",
-        timestamp
-      };
-  }
+  return unprocessed.slice(0, limit);
 }
 
 function makeMockEvent(): StreamEvent {
